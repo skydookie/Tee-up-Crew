@@ -183,11 +183,14 @@ td b{font-weight:900}
           <div class="hint">키워드에 골프장·컨트리클럽·CC를 자동으로 붙여 함께 검색합니다.</div>
         </div>
         <div class="field"><label for="fClub">골프장 이름 (리포트 표기용)</label><input type="text" id="fClub" placeholder="직접 수정 가능"></div>
-        <div class="field" id="courseField" style="display:none">
-          <label>코스 선택</label>
-          <div id="courseChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
-          <input type="text" id="fCourse" placeholder="칩을 누르거나 직접 입력 (예: 마운틴+레이크)">
-          <div class="hint" id="courseHint"></div>
+        <div class="field">
+          <label for="fCourse">코스 (수기 입력)</label>
+          <input type="text" id="fCourse" placeholder="예: 마운틴+레이크">
+          <div class="hint"><a class="map-link" href="#" onclick="courseReviewSearch();return false;">🔍 코스 후기 최근 1년 구글 검색</a> — 보고 아래에 요약을 붙여넣으면 리포트에 실립니다.</div>
+        </div>
+        <div class="field">
+          <label for="fCourseNote">코스 리뷰 요약 (선택)</label>
+          <textarea id="fCourseNote" rows="2" placeholder="검색에서 본 공략 포인트·후기 요약 붙여넣기"></textarea>
         </div>
         <div class="field"><label for="fCheckin">체크인 여유(분)</label><input type="number" id="fCheckin" value="40" min="10" step="5"></div>
       </div>
@@ -268,7 +271,11 @@ td b{font-weight:900}
             <option value="near">주변 식당</option>
           </select>
           <div id="bkNear" style="display:none;margin-top:8px">
-            <button class="btn" type="button" onclick="findRestaurants('bk')">주변 식당 검색 (1~3순위)</button>
+            <button class="btn" type="button" onclick="findRestaurants('bk')">식당 검색 (1~3순위)</button>
+            <div class="geo-row" style="margin-top:8px">
+              <input type="text" id="bkManual" placeholder="식당명 직접 입력 (선택)">
+              <button class="btn" type="button" onclick="manualRest('bk')">선택</button>
+            </div>
             <div id="bkList" style="margin-top:8px"></div>
           </div>
         </div>
@@ -280,11 +287,23 @@ td b{font-weight:900}
             <option value="near">주변 식당</option>
           </select>
           <div id="lunchNear" style="display:none;margin-top:8px">
-            <button class="btn" type="button" onclick="findRestaurants('lunch')">주변 식당 검색 (1~3순위)</button>
+            <button class="btn" type="button" onclick="findRestaurants('lunch')">식당 검색 (1~3순위)</button>
+            <div class="geo-row" style="margin-top:8px">
+              <input type="text" id="lunchManual" placeholder="식당명 직접 입력 (선택)">
+              <button class="btn" type="button" onclick="manualRest('lunch')">선택</button>
+            </div>
             <div id="lunchList" style="margin-top:8px"></div>
           </div>
         </div>
-        <div class="hint" style="margin-bottom:13px">추천 순위는 클럽하우스에서 자동차 소요시간 기준입니다. 영업시간·전화는 지도 데이터(OSM) 기준이므로, 각 식당의 구글 지도 링크에서 최신 정보를 꼭 확인하세요.</div>
+        <div class="hint" style="margin-bottom:13px">식당은 <b>최근 1년 네이버·티스토리·유튜브 언급량 순</b>으로 자동 추천됩니다 (검색 기능 내장). 한도 초과 시 자동으로 차량 소요시간 순으로 전환됩니다. 영업시간·전화는 지도 데이터 기준이니 구글 지도 링크에서 최신 정보를 확인하세요.</div>
+        <details style="margin-bottom:13px"><summary style="font-size:12px;font-weight:700;cursor:pointer">⚙ 검색 키 재설정 (선택 — 기본 키가 내장되어 있습니다)</summary>
+          <div style="margin-top:8px">
+            <div class="field"><input type="text" id="gcsKey" placeholder="API 키" autocomplete="off"></div>
+            <div class="field"><input type="text" id="gcsCx" placeholder="검색엔진 ID (cx)" autocomplete="off"></div>
+            <button class="btn" type="button" onclick="saveKeys()">저장</button>
+            <div class="hint">발급: ① programmablesearchengine.google.com에서 검색엔진 생성(전체 웹 검색 ON) → ID 복사 ② console.cloud.google.com에서 Custom Search API 사용 설정 → 키 발급 → 키 제한을 "HTTP 리퍼러: skydookie.github.io/*"로 설정. 카드 등록 불필요.</div>
+          </div>
+        </details>
         <div class="field">
           <label for="fNote">메모 (선택)</label>
           <textarea id="fNote" rows="2" placeholder="그린피, 예약자명, 캐디피 등"></textarea>
@@ -370,6 +389,29 @@ async function geoSearch(q){
   return nomiErr?null:[];
 }
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function courseReviewSearch(){
+  const club=document.getElementById('fClub').value.trim()||(geo&&geo.name)||'';
+  if(!club){alert('골프장을 먼저 검색·선택해주세요.');return;}
+  const course=document.getElementById('fCourse').value.trim();
+  window.open('https://www.google.com/search?q='+encodeURIComponent(club+' '+(course?course+' 코스':'코스')+' 후기')+'&tbs=qdr:y','_blank');
+}
+/* --- 구글 검색 API 키 (선택, 무료 100회/일) --- */
+const DEFAULT_KEY='AIzaSyCf_BmSqL6QjUJjnhyCzaIgUtBSO6Nq3FU';const DEFAULT_CX='606f83d9579c84eca';
+function loadKeys(){try{return{key:localStorage.getItem('gcs_key')||DEFAULT_KEY,cx:localStorage.getItem('gcs_cx')||DEFAULT_CX}}catch(e){return{key:DEFAULT_KEY,cx:DEFAULT_CX}}}
+let gcs=loadKeys();
+try{document.getElementById('gcsKey').value=gcs.key;document.getElementById('gcsCx').value=gcs.cx;}catch(e){}
+function saveKeys(){
+  gcs={key:document.getElementById('gcsKey').value.trim(),cx:document.getElementById('gcsCx').value.trim()};
+  try{localStorage.setItem('gcs_key',gcs.key);localStorage.setItem('gcs_cx',gcs.cx);}catch(e){}
+  alert(gcs.key&&gcs.cx?'저장되었습니다. 이제 식당 검색이 인기순(최근 1년 언급)으로 동작합니다.':'키 또는 검색엔진 ID가 비어 있어 거리순으로 동작합니다.');
+}
+async function cseSearch(q,start){
+  const u=`https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gcs.key)}&cx=${encodeURIComponent(gcs.cx)}&q=${encodeURIComponent(q)}&dateRestrict=y1&num=10&start=${start}`;
+  const res=await fetch(u);
+  if(!res.ok)throw new Error('cse '+res.status);
+  const j=await res.json();
+  return (j.items||[]).map(it=>((it.title||'')+' '+(it.snippet||'')));
+}
 const FAIL_MSG='검색 서버 연결 실패 — 인터넷 연결을 확인하세요. 카톡·문자 미리보기에서는 검색이 차단될 수 있으니, 파일을 크롬·사파리 등 브라우저로 열어주세요.';
 
 /* ---- 골프장 키워드 검색 ---- */
@@ -406,52 +448,12 @@ async function searchClub(){
       box.innerHTML=`✓ <b>${r.name}</b> 선택됨 — 날씨·이동시간·식당 기준점`;
       chainCands=[];chainPlan=null;renderChainCands();
       mealPick={bk:null,lunch:null};
-      searchCourses();
       recalcAll();
     };
     box.appendChild(b);
   });
 }
 
-/* ---- 코스 검색 ---- */
-const PRESET_COURSES=['IN','OUT','A','B','동','서','남','북','마운틴','레이크','밸리','힐','파인','오션'];
-let selectedCourses=[];
-function renderCourseChips(names,isPreset){
-  const wrap=document.getElementById('courseChips');wrap.innerHTML='';
-  names.forEach(n=>{
-    const b=document.createElement('button');b.type='button';b.className='btn';b.textContent=n;
-    b.style.cssText='font-size:12px;padding:5px 12px;box-shadow:2px 2px 0 var(--ink)';
-    b.onclick=()=>{
-      const i=selectedCourses.indexOf(n);
-      if(i>=0){selectedCourses.splice(i,1);b.classList.remove('lime');}
-      else{selectedCourses.push(n);b.classList.add('lime');}
-      document.getElementById('fCourse').value=selectedCourses.join('+');
-    };
-    wrap.appendChild(b);
-  });
-  document.getElementById('courseHint').textContent=isPreset
-    ?'이 골프장의 코스 정보를 지도에서 찾지 못했습니다. 프리셋을 누르거나 직접 입력하세요.'
-    :'코스를 순서대로 누르면 자동 입력됩니다. 목록에 없으면 직접 입력하세요.';
-}
-async function searchCourses(){
-  selectedCourses=[];document.getElementById('fCourse').value='';
-  document.getElementById('courseField').style.display='block';
-  document.getElementById('courseChips').innerHTML='<span class="hint">코스 검색 중…</span>';
-  document.getElementById('courseHint').textContent='';
-  let found=[];
-  try{
-    const q=`[out:json][timeout:10];(way(around:2500,${geo.lat},${geo.lon})[name][golf];relation(around:2500,${geo.lat},${geo.lon})[name][golf];way(around:2500,${geo.lat},${geo.lon})[name][leisure=golf_course];relation(around:2500,${geo.lat},${geo.lon})[name][leisure=golf_course];);out tags 30;`;
-    const j=await (await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}})).json();
-    const seen=new Set();
-    (j.elements||[]).forEach(el=>{
-      const n=el.tags&&el.tags.name;
-      if(!n||seen.has(n)||n===geo.name)return;
-      if(/코스|course/i.test(n)||(el.tags.golf&&el.tags.golf!=='hole')){seen.add(n);found.push(n.replace(/\s*코스$/,''));}
-    });
-  }catch(e){}
-  if(found.length)renderCourseChips(found.slice(0,12),false);
-  else renderCourseChips(PRESET_COURSES,true);
-}
 
 /* ---- 출발지 검색 ---- */
 async function searchFrom(){
@@ -716,28 +718,66 @@ async function findRestaurants(kind){
   }catch(e){listEl.innerHTML='<span class="hint">식당 검색 서버 연결 실패 — 잠시 후 다시 시도해주세요.</span>';return;}
   if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 8km 내 식당을 찾지 못했습니다. 구글 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://www.google.com/maps/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'/@'+geo.lat+','+geo.lon+',13z" target="_blank" rel="noopener">구글 지도 열기</a></span>';return;}
   cands.sort((a,b)=>havKm(geo,a)-havKm(geo,b));
-  cands=cands.slice(0,8);
+  cands=cands.slice(0,12);
   // 클럽하우스 → 각 식당 차량 소요시간 (한 번의 행렬 호출)
   const D=await osrmTable([geo].concat(cands));
   if(D){cands.forEach((c,i)=>{c.min=D[0][i+1];});}
   cands=cands.filter(c=>c.min!=null||!D);
-  cands.sort((a,b)=>(a.min??999)-(b.min??999));
+  // 인기순: 구글 검색(최근 1년) "골프장 맛집" 결과에서 각 식당명 언급 횟수 집계
+  let rankBase='거리순';
+  if(gcs.key&&gcs.cx){
+    try{
+      listEl.innerHTML='<span class="hint">최근 1년 웹 언급량 집계 중…</span>';
+      const clubName=document.getElementById('fClub').value.trim()||geo.name;
+      let texts=await cseSearch(clubName+' 맛집',1);
+      try{texts=texts.concat(await cseSearch(clubName+' 근처 맛집',1));}catch(e){}
+      texts=[...new Set(texts)]; // 두 쿼리에 겹친 동일 글 중복 집계 방지
+      const norm=t=>t.replace(/\s+/g,'');
+      const blob=norm(texts.join(' '));
+      cands.forEach(c=>{
+        const key=norm(c.name);
+        if(key.length<2){c.hits=0;return;}
+        c.hits=blob.split(key).length-1;
+      });
+      if(cands.some(c=>c.hits>0)){
+        cands.sort((a,b)=>(b.hits||0)-(a.hits||0)||(a.min??999)-(b.min??999));
+        rankBase='최근 1년 언급량순';
+      }else{
+        cands.sort((a,b)=>(a.min??999)-(b.min??999));
+        rankBase='거리순 (언급 데이터 없음)';
+      }
+    }catch(e){
+      cands.sort((a,b)=>(a.min??999)-(b.min??999));
+      rankBase='거리순 (검색 API 오류 — 키·리퍼러 설정 확인)';
+    }
+  }else{
+    cands.sort((a,b)=>(a.min??999)-(b.min??999));
+  }
   const top=cands.slice(0,3);
   lastRest[kind]=top;
   listEl.innerHTML=top.map((c,i)=>{
     const nv='https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z';
     return `<div class="member" id="rc-${kind}-${i}">
-      <span class="m-name">${i+1}순위 · ${c.name}</span>${c.cuisine?`<span class="tag gray">${c.cuisine}</span>`:''}
+      <span class="m-name">${i+1}순위 · ${c.name}</span>${c.hits?`<span class="tag">언급 ${c.hits}회</span>`:''}${c.cuisine?`<span class="tag gray">${c.cuisine}</span>`:''}
       <div class="m-info" style="color:var(--ink)">🚗 클럽하우스에서 약 ${c.min!=null?c.min+'분':'?'}${c.addr?` · ${c.addr}`:''}</div>
       <div class="m-info">${c.hours?`⏰ ${c.hours}`:'⏰ 영업시간 정보 없음'}${c.phone?` · ☎ ${c.phone}`:' · ☎ 정보 없음'} · <a class="map-link" href="${nv}" target="_blank" rel="noopener">구글 지도 확인</a></div>
       <div style="margin-top:6px"><button class="btn" style="font-size:11.5px;padding:5px 12px;box-shadow:2px 2px 0 var(--ink)" type="button" onclick="pickRest('${kind}',${i})">이 식당 선택</button></div>
     </div>`;
-  }).join('')+'<div class="hint">순위는 차량 소요시간 기준. 영업시간·전화는 지도 데이터라 오래됐을 수 있으니 방문 전 구글 지도에서 확인하세요.</div>';
+  }).join('')+'<div class="hint">순위 기준: '+rankBase+'. 영업시간·전화는 지도 데이터라 오래됐을 수 있으니 방문 전 구글 지도에서 확인하세요.</div>';
 }
 function pickRest(kind,idx){
   mealPick[kind]=lastRest[kind][idx];
   const listEl=document.getElementById(kind==='bk'?'bkList':'lunchList');
   listEl.querySelectorAll('.member').forEach((el,i)=>el.classList.toggle('pick',i===idx));
+}
+
+function manualRest(kind){
+  const inp=document.getElementById(kind==='bk'?'bkManual':'lunchManual');
+  const name=inp.value.trim();
+  if(!name){alert('식당명을 입력해주세요.');return;}
+  mealPick[kind]={name,min:null,manual:true};
+  document.getElementById(kind==='bk'?'bkList':'lunchList').innerHTML=
+    '<div class="member pick"><span class="m-name">✓ 직접 입력 — '+name.replace(/</g,'&lt;')+'</span><div class="m-info">소요시간 미확인 — 구글 지도에서 위치를 확인하세요.</div></div>';
 }
 
 /* ================= 연결 진단 ================= */
@@ -789,7 +829,7 @@ async function buildReport(){
   const date=v('fDate'),tee=v('fTee'),club=v('fClub')||'라운딩',course=v('fCourse');
   const checkin=parseInt(v('fCheckin'))||40;
   const factor=parseFloat(document.getElementById('fTraffic').value)||1;
-  const bk=document.getElementById('fBk').value, lunch=document.getElementById('fLunch').value, note=v('fNote');
+  const bk=document.getElementById('fBk').value, lunch=document.getElementById('fLunch').value, note=v('fNote'), courseNote=v('fCourseNote');
   if(!date||!tee){alert('날짜와 티오프 시간을 입력해주세요.');return;}
   if(!members.length){alert('멤버를 1명 이상 추가해주세요.');return;}
   const F=x=>Math.ceil(x*factor/5)*5;
@@ -885,15 +925,25 @@ async function buildReport(){
   const restCard=(label,pick,mode)=>{
     if(mode==='none')return'';
     if(mode==='club')return`<div class="rest-card"><span class="r-name">${label} — 클럽하우스</span></div>`;
-    const c=pick, nv='https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z';
+    const c=pick, nv=c.lat!=null?'https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z':'https://www.google.com/maps/search/'+encodeURIComponent(c.name);
     return`<div class="rest-card">
-      <span class="r-name">${label} — ${c.name}</span>
-      <div class="r-line">🚗 클럽하우스에서 약 ${c.min!=null?F(c.min)+'분':'?'} ${c.addr?`· ${c.addr}`:'· <span>주소는 구글 지도 링크 참고</span>'}</div>
+      <span class="r-name">${label} — ${c.name}</span>${c.hits?` <span class="tag">최근 1년 언급 ${c.hits}회</span>`:''}
+      <div class="r-line">🚗 클럽하우스에서 ${c.min!=null?'약 '+F(c.min)+'분':'<span>소요시간 미확인</span>'} ${c.addr?`· ${c.addr}`:'· <span>주소는 구글 지도 링크 참고</span>'}</div>
       <div class="r-line">${c.hours?`⏰ ${c.hours}`:'<span>⏰ 영업시간 정보 없음 — 지도에서 확인</span>'} ${c.phone?`· ☎ ${c.phone}`:'· <span>☎ 정보 없음</span>'}</div>
       <div class="r-line"><a class="map-link" href="${nv}" target="_blank" rel="noopener">구글 지도에서 최신 정보·리뷰 확인 →</a></div>
     </div>`;
   };
   const restHtml=restCard('아침',mealPick.bk,bk)+restCard('점심',mealPick.lunch,lunch);
+
+  // 코스 리뷰 섹션
+  let courseSec='';
+  {
+    const linkQ=encodeURIComponent(club+' '+(course?course+' 코스':'코스')+' 후기');
+    const link=`<a class="map-link" href="https://www.google.com/search?q=${linkQ}&tbs=qdr:y" target="_blank" rel="noopener">최근 1년 코스 후기 구글 검색 →</a>`;
+    if(courseNote)courseSec=`<p style="font-size:13.5px;white-space:pre-wrap">${courseNote.replace(/</g,'&lt;')}</p><div class="hint" style="margin-top:6px">${link}</div>`;
+    else if(course)courseSec=`<div class="hint">붙여넣은 리뷰 요약이 없습니다. ${link}</div>`;
+  }
+  let secN=2; const nextNum=()=>String(++secN).padStart(2,'0');
 
   document.getElementById('reportContent').innerHTML=`
     <div class="rep-hero">
@@ -922,19 +972,21 @@ async function buildReport(){
         <div class="tl">${tl.map(r=>`<div class="tl-row${r[1].includes('TEE-OFF')?' hot':''}"><div class="tl-t">${r[0]}</div><div class="tl-b"><b>${r[1]}</b>${r[2]?`<div class="d">${r[2]}</div>`:''}</div></div>`).join('')}</div>
       </div>
 
-      ${restHtml?`<div class="sec"><div class="sec-h"><span class="num">03</span><b>식당</b><span class="line"></span></div>${restHtml}</div>`:''}
+      ${restHtml?`<div class="sec"><div class="sec-h"><span class="num">${nextNum()}</span><b>식당</b><span class="line"></span></div>${restHtml}</div>`:''}
 
       <div class="sec">
-        <div class="sec-h"><span class="num">${restHtml?'04':'03'}</span><b>날씨${geo?' — '+geo.name:''}</b><span class="line"></span></div>
+        <div class="sec-h"><span class="num">${nextNum()}</span><b>날씨${geo?' — '+geo.name:''}</b><span class="line"></span></div>
         ${weatherHtml}
       </div>
 
       <div class="sec">
-        <div class="sec-h"><span class="num">${restHtml?'05':'04'}</span><b>준비물</b><span class="line"></span></div>
+        <div class="sec-h"><span class="num">${nextNum()}</span><b>준비물</b><span class="line"></span></div>
         <div class="check">${items.map(i=>`<div><span class="box"></span>${i}</div>`).join('')}</div>
       </div>
 
-      ${note?`<div class="sec"><div class="sec-h"><span class="num">${restHtml?'06':'05'}</span><b>메모</b><span class="line"></span></div><p style="font-size:13.5px">${note}</p></div>`:''}
+      ${courseSec?`<div class="sec"><div class="sec-h"><span class="num">${nextNum()}</span><b>코스 리뷰${course?' — '+course:''}</b><span class="line"></span></div>${courseSec}</div>`:''}
+
+      ${note?`<div class="sec"><div class="sec-h"><span class="num">${nextNum()}</span><b>메모</b><span class="line"></span></div><p style="font-size:13.5px">${note}</p></div>`:''}
 
     </div>
     <div class="rep-foot">TEE-UP CREW · MADE BY 골프막걸로이 · BLOG.NAVER.COM/GOLFRORY</div>
@@ -948,6 +1000,7 @@ async function buildReport(){
     (tBk?`\n\n[아침] ${tBk} ${bk==='club'?'클럽하우스':mealPick.bk.name}`:'')+
     `\n[체크인] ${tCheckin}\n[티오프] ${tee}`+
     mealLine('라운딩 후',lunch,mealPick.lunch)+
+    (courseNote?`\n\n[코스 리뷰] ${courseNote}`:'')+
     (weatherRows&&weatherRows.length?`\n\n[날씨] ${Math.min(...weatherRows.map(r=>r.temp))}~${Math.max(...weatherRows.map(r=>r.temp))}℃, 강수 최대 ${Math.max(...weatherRows.map(r=>r.prcp??0))}%`:'')+
     `\n\n— TEE-UP CREW`;
 
