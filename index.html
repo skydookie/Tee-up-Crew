@@ -284,7 +284,7 @@ td b{font-weight:900}
             <div id="lunchList" style="margin-top:8px"></div>
           </div>
         </div>
-        <div class="hint" style="margin-bottom:13px">추천 순위는 클럽하우스에서 자동차 소요시간 기준입니다. 영업시간·전화는 지도 데이터(OSM) 기준이므로, 각 식당의 네이버 지도 링크에서 최신 정보를 꼭 확인하세요.</div>
+        <div class="hint" style="margin-bottom:13px">추천 순위는 클럽하우스에서 자동차 소요시간 기준입니다. 영업시간·전화는 지도 데이터(OSM) 기준이므로, 각 식당의 구글 지도 링크에서 최신 정보를 꼭 확인하세요.</div>
         <div class="field">
           <label for="fNote">메모 (선택)</label>
           <textarea id="fNote" rows="2" placeholder="그린피, 예약자명, 캐디피 등"></textarea>
@@ -714,7 +714,7 @@ async function findRestaurants(kind){
         cuisine:t.cuisine||null});
     });
   }catch(e){listEl.innerHTML='<span class="hint">식당 검색 서버 연결 실패 — 잠시 후 다시 시도해주세요.</span>';return;}
-  if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 8km 내 식당을 찾지 못했습니다. 네이버 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://map.naver.com/p/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'" target="_blank" rel="noopener">네이버 지도 열기</a></span>';return;}
+  if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 8km 내 식당을 찾지 못했습니다. 구글 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://www.google.com/maps/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'/@'+geo.lat+','+geo.lon+',13z" target="_blank" rel="noopener">구글 지도 열기</a></span>';return;}
   cands.sort((a,b)=>havKm(geo,a)-havKm(geo,b));
   cands=cands.slice(0,8);
   // 클럽하우스 → 각 식당 차량 소요시간 (한 번의 행렬 호출)
@@ -725,14 +725,14 @@ async function findRestaurants(kind){
   const top=cands.slice(0,3);
   lastRest[kind]=top;
   listEl.innerHTML=top.map((c,i)=>{
-    const nv='https://map.naver.com/p/search/'+encodeURIComponent(c.name);
+    const nv='https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z';
     return `<div class="member" id="rc-${kind}-${i}">
       <span class="m-name">${i+1}순위 · ${c.name}</span>${c.cuisine?`<span class="tag gray">${c.cuisine}</span>`:''}
       <div class="m-info" style="color:var(--ink)">🚗 클럽하우스에서 약 ${c.min!=null?c.min+'분':'?'}${c.addr?` · ${c.addr}`:''}</div>
-      <div class="m-info">${c.hours?`⏰ ${c.hours}`:'⏰ 영업시간 정보 없음'}${c.phone?` · ☎ ${c.phone}`:' · ☎ 정보 없음'} · <a class="map-link" href="${nv}" target="_blank" rel="noopener">네이버 지도 확인</a></div>
+      <div class="m-info">${c.hours?`⏰ ${c.hours}`:'⏰ 영업시간 정보 없음'}${c.phone?` · ☎ ${c.phone}`:' · ☎ 정보 없음'} · <a class="map-link" href="${nv}" target="_blank" rel="noopener">구글 지도 확인</a></div>
       <div style="margin-top:6px"><button class="btn" style="font-size:11.5px;padding:5px 12px;box-shadow:2px 2px 0 var(--ink)" type="button" onclick="pickRest('${kind}',${i})">이 식당 선택</button></div>
     </div>`;
-  }).join('')+'<div class="hint">순위는 차량 소요시간 기준. 영업시간·전화는 지도 데이터라 오래됐을 수 있으니 방문 전 네이버 지도에서 확인하세요.</div>';
+  }).join('')+'<div class="hint">순위는 차량 소요시간 기준. 영업시간·전화는 지도 데이터라 오래됐을 수 있으니 방문 전 구글 지도에서 확인하세요.</div>';
 }
 function pickRest(kind,idx){
   mealPick[kind]=lastRest[kind][idx];
@@ -885,12 +885,12 @@ async function buildReport(){
   const restCard=(label,pick,mode)=>{
     if(mode==='none')return'';
     if(mode==='club')return`<div class="rest-card"><span class="r-name">${label} — 클럽하우스</span></div>`;
-    const c=pick, nv='https://map.naver.com/p/search/'+encodeURIComponent(c.name);
+    const c=pick, nv='https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z';
     return`<div class="rest-card">
       <span class="r-name">${label} — ${c.name}</span>
-      <div class="r-line">🚗 클럽하우스에서 약 ${c.min!=null?F(c.min)+'분':'?'} ${c.addr?`· ${c.addr}`:'· <span>주소는 지도 링크 참고</span>'}</div>
+      <div class="r-line">🚗 클럽하우스에서 약 ${c.min!=null?F(c.min)+'분':'?'} ${c.addr?`· ${c.addr}`:'· <span>주소는 구글 지도 링크 참고</span>'}</div>
       <div class="r-line">${c.hours?`⏰ ${c.hours}`:'<span>⏰ 영업시간 정보 없음 — 지도에서 확인</span>'} ${c.phone?`· ☎ ${c.phone}`:'· <span>☎ 정보 없음</span>'}</div>
-      <div class="r-line"><a class="map-link" href="${nv}" target="_blank" rel="noopener">네이버 지도에서 최신 정보·리뷰 확인 →</a></div>
+      <div class="r-line"><a class="map-link" href="${nv}" target="_blank" rel="noopener">구글 지도에서 최신 정보·리뷰 확인 →</a></div>
     </div>`;
   };
   const restHtml=restCard('아침',mealPick.bk,bk)+restCard('점심',mealPick.lunch,lunch);
