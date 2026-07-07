@@ -227,10 +227,14 @@ td b{font-weight:900}
           <label>② 동선 방식</label>
           <div class="mode-btns">
             <button id="rmDirect" class="btn on" type="button" onclick="setRouteMode('direct')">각자 직행</button>
+            <button id="rmGroup" class="btn" type="button" onclick="setRouteMode('group')">👥 동승 그룹 지정</button>
             <button id="rmChain" class="btn" type="button" onclick="setRouteMode('chain')">🚗 최적 카풀 추천</button>
             <button id="rmManual" class="btn" type="button" onclick="setRouteMode('manual')">수동 설정</button>
           </div>
 
+          <div id="groupBlock" style="display:none;margin-top:12px">
+            <div class="hint">각 멤버 카드에서 <b>함께 탈 사람</b>을 고르면 같은 조로 묶입니다. 조마다 <b>운전자·픽업 순서·픽업 시각</b>을 자동 계산합니다 (운전 시간이 가장 짧은 사람이 운전자).</div>
+          </div>
           <div id="chainBlock" style="display:none;margin-top:12px">
             <button class="btn" type="button" onclick="suggestChains()">동선 후보 계산 (최대 3개)</button>
             <div id="chainCands" style="margin-top:10px"></div>
@@ -345,7 +349,8 @@ let geo=null, weatherRows=null, shareText='';
 let members=[];            // {id,name,from,lat,lon,route:'direct'|meetId,drive:분|null}
 let meets=[];              // {id,name,lat,lon,toClub:분|null,memberId|null}
 let pendingFrom=null;
-let routeMode='direct';    // direct | chain | manual
+let routeMode='direct';    // direct | group | chain | manual
+let groupPlans=[];         // [{ids:[],order:[],legs:[],driver}]
 let chainCands=[];         // [{order:[idx],legs:[분],driver,total}]
 let chainPlan=null;        // {ids:[memberId],legs:[분],label}
 let mealPick={bk:null,lunch:null}; // {name,min,phone,hours,addr}
@@ -411,6 +416,18 @@ async function cseSearch(q,start){
   if(!res.ok)throw new Error('cse '+res.status);
   const j=await res.json();
   return (j.items||[]).map(it=>((it.title||'')+' '+(it.snippet||'')));
+}
+async function overpass(q){
+  const eps=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+  for(const ep of eps){
+    try{
+      const ctl=new AbortController();const to=setTimeout(()=>ctl.abort(),20000);
+      const res=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal:ctl.signal});
+      clearTimeout(to);
+      if(res.ok)return await res.json();
+    }catch(e){}
+  }
+  return null;
 }
 const FAIL_MSG='검색 서버 연결 실패 — 인터넷 연결을 확인하세요. 카톡·문자 미리보기에서는 검색이 차단될 수 있으니, 파일을 크롬·사파리 등 브라우저로 열어주세요.';
 
@@ -513,14 +530,16 @@ function addMember(){
   const n=document.getElementById('mName').value.trim();
   if(!n){alert('이름을 입력해주세요.');return;}
   if(!pendingFrom){alert('출발지를 검색해서 선택해주세요.');return;}
-  members.push({id:'m'+(uid++),name:n,from:pendingFrom.name,lat:pendingFrom.lat,lon:pendingFrom.lon,route:'direct',drive:null});
+  members.push({id:'m'+(uid++),name:n,from:pendingFrom.name,lat:pendingFrom.lat,lon:pendingFrom.lon,route:'direct',drive:null,mates:[]});
   document.getElementById('mName').value='';document.getElementById('mFromSearch').value='';
   document.getElementById('fromRes').textContent='';pendingFrom=null;
   chainCands=[];chainPlan=null;renderChainCands();
   refreshMeetFromSelect();recalcAll();
+  if(routeMode==='group')recomputeGroups();
 }
 function delMember(id){
   members=members.filter(m=>m.id!==id);
+  members.forEach(m=>{m.mates=m.mates.filter(x=>x!==id);});
   meets=meets.filter(mt=>mt.memberId!==id);
   members.forEach(m=>{if(m.route!=='direct'&&!meets.find(x=>x.id===m.route))m.route='direct';});
   chainCands=[];chainPlan=null;renderChainCands();
@@ -528,27 +547,45 @@ function delMember(id){
 }
 function setRoute(id,val){const m=members.find(x=>x.id===id);m.route=val;m.drive=null;recalcAll();}
 function setDrive(id,val){const m=members.find(x=>x.id===id);m.drive=parseInt(val)||0;}
+function groupIndexOf(id){return groupPlans.findIndex(g=>g.ids.includes(id));}
 function renderMembers(){
   const el=document.getElementById('memberList');
   if(!members.length){el.innerHTML='<div class="hint">아직 추가된 멤버가 없습니다.</div>';return;}
+  const grpColors=['#C7F000','#9fe0ff','#ffd39f','#e0b3ff','#b3ffcf','#ffb3c1'];
   el.innerHTML=members.map(m=>{
-    let routeCtl='';
+    let extra='';
     if(routeMode==='manual'){
       const opts=[`<option value="direct" ${m.route==='direct'?'selected':''}>골프장 직행</option>`]
         .concat(meets.map(mt=>`<option value="${mt.id}" ${m.route===mt.id?'selected':''}>${mt.name} 경유</option>`)).join('');
-      routeCtl=`<select style="width:auto;padding:4px 6px;font-size:12px;border-width:1.5px" onchange="setRoute('${m.id}',this.value)">${opts}</select>`;
+      extra=`<div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+        <select style="width:auto;padding:4px 6px;font-size:12px;border-width:1.5px" onchange="setRoute('${m.id}',this.value)">${opts}</select>
+        <span style="font-size:12px">이동</span>
+        <input class="mini" type="number" step="5" min="0" value="${m.drive??''}" placeholder="분" onchange="setDrive('${m.id}',this.value)">
+        <span style="font-size:12px">분 ${m.drive!=null?'<span class="tag gray">자동</span>':'<span class="tag gray">골프장 선택 시 자동계산</span>'}</span></div>`;
+    }else if(routeMode==='group'){
+      const others=members.filter(o=>o.id!==m.id);
+      const chips=others.length?others.map(o=>{
+        const on=m.mates.includes(o.id);
+        return `<button type="button" class="btn${on?' lime':''}" style="font-size:11px;padding:3px 9px;box-shadow:1px 1px 0 var(--ink)" onclick="toggleMate('${m.id}','${o.id}')">${on?'✓ ':''}${o.name}</button>`;
+      }).join(' '):'<span class="hint">다른 멤버가 없습니다.</span>';
+      const gi=groupIndexOf(m.id);
+      const g=gi>=0?groupPlans[gi]:null;
+      let gInfo='';
+      if(g&&!g.solo){
+        const isDriver=g.driver===m.id;
+        const clr=grpColors[gi%grpColors.length];
+        gInfo=`<div class="m-info" style="margin-top:5px"><span class="tag" style="background:${clr}">${gi+1}조</span> `+
+          (g.failed?'경로 계산 실패 — 잠시 후 재시도':g.needClub?'골프장 선택 시 순서 계산':
+            (isDriver?'🚗 운전자':'동승')+` · ${g.order.map(id=>members.find(x=>x.id===id).name).join(' → ')} → 골프장`)+'</div>';
+      }else if(g&&g.solo){gInfo='<div class="m-info" style="margin-top:5px"><span class="tag gray">단독 · 직행</span></div>';}
+      extra=`<div style="margin-top:6px"><div style="font-size:11px;font-weight:700;margin-bottom:4px">함께 탈 사람</div><div style="display:flex;gap:4px;flex-wrap:wrap">${chips}</div>${gInfo}</div>`;
     }
     const isMeetHome=routeMode==='manual'&&m.route!=='direct'&&meets.find(x=>x.id===m.route)?.memberId===m.id;
     return `<div class="member">
       <span class="m-name">${m.name}</span>
       ${isMeetHome?'<span class="tag">집결지=자택</span>':''}
       <div class="m-info">${m.from} 출발</div>
-      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
-        ${routeCtl}
-        <span style="font-size:12px">이동</span>
-        <input class="mini" type="number" step="5" min="0" value="${m.drive??''}" placeholder="분" onchange="setDrive('${m.id}',this.value)">
-        <span style="font-size:12px">분 ${m.drive!=null?'<span class="tag gray">자동</span>':'<span class="tag gray">골프장 선택 시 자동계산</span>'}</span>
-      </div>
+      ${extra}
       <button class="del" type="button" onclick="delMember('${m.id}')" aria-label="${m.name} 삭제">×</button>
     </div>`;
   }).join('');
@@ -557,12 +594,61 @@ function renderMembers(){
 /* ================= 동선 방식 ================= */
 function setRouteMode(mode){
   routeMode=mode;
-  ['rmDirect','rmChain','rmManual'].forEach(id=>document.getElementById(id).classList.remove('on'));
-  document.getElementById(mode==='direct'?'rmDirect':mode==='chain'?'rmChain':'rmManual').classList.add('on');
+  ['rmDirect','rmGroup','rmChain','rmManual'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  const map={direct:'rmDirect',group:'rmGroup',chain:'rmChain',manual:'rmManual'};
+  document.getElementById(map[mode]).classList.add('on');
+  document.getElementById('groupBlock').style.display=mode==='group'?'block':'none';
   document.getElementById('chainBlock').style.display=mode==='chain'?'block':'none';
   document.getElementById('manualBlock').style.display=mode==='manual'?'block':'none';
   if(mode==='manual')refreshMeetFromSelect();
+  if(mode==='group')recomputeGroups();
   recalcAll();
+}
+
+/* ===== 동승 그룹: 상호 선택 → 조 편성 → 조별 최적 운전자·순서 ===== */
+function toggleMate(id,mateId){
+  const m=members.find(x=>x.id===id);
+  const i=m.mates.indexOf(mateId);
+  if(i>=0)m.mates.splice(i,1);else m.mates.push(mateId);
+  // 상호 반영 (양방향 동승)
+  const o=members.find(x=>x.id===mateId);
+  const j=o.mates.indexOf(id);
+  if(i>=0){if(j>=0)o.mates.splice(j,1);}else{if(j<0)o.mates.push(id);}
+  recomputeGroups();
+}
+function buildGroups(){
+  // union-find로 mates 연결요소 → 그룹
+  const idOf={};members.forEach((m,i)=>idOf[m.id]=i);
+  const par=members.map((_,i)=>i);
+  const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x];}return x;};
+  const uni=(a,b)=>{par[find(a)]=find(b);};
+  members.forEach(m=>m.mates.forEach(mid=>{if(idOf[mid]!=null)uni(idOf[m.id],idOf[mid]);}));
+  const g={};members.forEach((m,i)=>{const r=find(i);(g[r]=g[r]||[]).push(m.id);});
+  return Object.values(g);
+}
+async function recomputeGroups(){
+  if(routeMode!=='group'){return;}
+  groupPlans=[];
+  const groups=buildGroups();
+  for(const ids of groups){
+    if(ids.length===1){groupPlans.push({ids,order:ids,legs:null,driver:ids[0],solo:true});continue;}
+    if(!geo){groupPlans.push({ids,order:ids,legs:null,driver:ids[0],needClub:true});continue;}
+    const ms=ids.map(id=>members.find(m=>m.id===id));
+    const D=await osrmTable(ms.concat([geo]));
+    if(!D){groupPlans.push({ids,order:ids,legs:null,driver:ids[0],failed:true});continue;}
+    const CLUB=ms.length;
+    let best=null;
+    perms([...Array(ms.length).keys()]).forEach(order=>{
+      const legs=[];let ok=true;
+      for(let i=0;i<ms.length;i++){const f=order[i],t=(i===ms.length-1)?CLUB:order[i+1];if(D[f][t]==null){ok=false;break;}legs.push(D[f][t]);}
+      if(!ok)return;
+      const driver=legs.reduce((a,b)=>a+b,0);
+      if(!best||driver<best.driver)best={order:order.map(i=>ids[i]),legs,driver};
+    });
+    if(best)groupPlans.push({ids,order:best.order,legs:best.legs,driver:best.order[0]});
+    else groupPlans.push({ids,order:ids,legs:null,driver:ids[0],failed:true});
+  }
+  renderMembers();
 }
 function perms(a){
   if(a.length<=1)return[a];
@@ -701,8 +787,9 @@ async function findRestaurants(kind){
   listEl.innerHTML='<span class="hint">주변 식당 검색 중…</span>';
   let cands=[];
   try{
-    const q=`[out:json][timeout:15];(node(around:8000,${geo.lat},${geo.lon})[amenity=restaurant][name];way(around:8000,${geo.lat},${geo.lon})[amenity=restaurant][name];);out center tags 60;`;
-    const j=await (await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}})).json();
+    const q=`[out:json][timeout:15];(node(around:10000,${geo.lat},${geo.lon})[amenity=restaurant][name];way(around:10000,${geo.lat},${geo.lon})[amenity=restaurant][name];);out center tags 60;`;
+    const j=await overpass(q);
+    if(!j){listEl.innerHTML='<span class="hint">식당 검색 서버 3곳이 모두 응답하지 않습니다. 잠시 후 다시 시도하거나, 식당명을 직접 입력해주세요.</span>';return;}
     const seen=new Set();
     (j.elements||[]).forEach(el=>{
       const t=el.tags||{};
@@ -716,7 +803,7 @@ async function findRestaurants(kind){
         cuisine:t.cuisine||null});
     });
   }catch(e){listEl.innerHTML='<span class="hint">식당 검색 서버 연결 실패 — 잠시 후 다시 시도해주세요.</span>';return;}
-  if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 8km 내 식당을 찾지 못했습니다. 구글 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://www.google.com/maps/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'/@'+geo.lat+','+geo.lon+',13z" target="_blank" rel="noopener">구글 지도 열기</a></span>';return;}
+  if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 10km 내 식당을 찾지 못했습니다. 구글 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://www.google.com/maps/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'/@'+geo.lat+','+geo.lon+',13z" target="_blank" rel="noopener">구글 지도 열기</a></span>';return;}
   cands.sort((a,b)=>havKm(geo,a)-havKm(geo,b));
   cands=cands.slice(0,12);
   // 클럽하우스 → 각 식당 차량 소요시간 (한 번의 행렬 호출)
@@ -795,7 +882,7 @@ async function diagnose(){
     probe('장소검색 1 (Nominatim)',async s=>(await fetch('https://nominatim.openstreetmap.org/search?q=seoul&format=jsonv2&limit=1',{signal:s})).ok),
     probe('장소검색 2 (Photon)',async s=>(await fetch('https://photon.komoot.io/api/?q=seoul&limit=1',{signal:s})).ok),
     probe('경로계산 (OSRM)',async s=>(await fetch('https://router.project-osrm.org/route/v1/driving/126.97,37.56;127.02,37.55?overview=false',{signal:s})).ok),
-    probe('주변검색 (Overpass)',async s=>(await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent('[out:json][timeout:5];node(1);out;'),signal:s})).ok),
+    probe('주변검색 (Overpass 3중화)',async s=>{const r=await overpass('[out:json][timeout:5];node(1);out;');return r!=null;}),
     probe('날씨 (Open-Meteo)',async s=>(await fetch('https://api.open-meteo.com/v1/forecast?latitude=37.5&longitude=127&hourly=temperature_2m&forecast_days=1',{signal:s})).ok),
   ]);
   const fails=r.filter(x=>x.startsWith('❌')).length;
@@ -839,6 +926,11 @@ async function buildReport(){
     if(!chainPlan){alert('카풀 동선 후보를 계산하고 하나를 선택(적용)해주세요.');return;}
     if(chainPlan.ids.length!==members.length||!chainPlan.ids.every(id=>members.find(m=>m.id===id))){
       alert('멤버 구성이 바뀌었습니다. 동선 후보를 다시 계산해주세요.');return;}
+  }else if(routeMode==='group'){
+    await recomputeGroups();
+    const bad=groupPlans.find(g=>g.failed||g.needClub);
+    if(bad){alert('일부 조의 경로를 계산하지 못했습니다. 골프장을 먼저 선택하고 잠시 후 다시 시도해주세요.');return;}
+    members.forEach(m=>{if(m.drive==null&&groupPlans.find(g=>g.solo&&g.ids[0]===m.id)){}});
   }else{
     const missing=[];
     if(routeMode==='manual')meets.forEach(mt=>{if(mt.toClub==null)missing.push(`집결지 "${mt.name}" → 골프장 이동시간`);});
@@ -876,6 +968,28 @@ async function buildReport(){
       route:i===0?'카풀 운전':'카풀 픽업'}));
     for(let i=1;i<ms.length;i++)tl.push([times[i],`🚗 ${ms[i].from} 픽업 — ${ms[i].name}`,'']);
     routeSummary=chainPlan.label;
+  }else if(routeMode==='group'){
+    const summaries=[];
+    groupPlans.forEach((g,gi)=>{
+      if(g.solo){
+        const m=members.find(x=>x.id===g.ids[0]);
+        deptRows.push({name:m.name,from:m.from,dep:minus(anchor,F(m.drive)),drive:F(m.drive),route:'직행'});
+        return;
+      }
+      const ms=g.order.map(id=>members.find(x=>x.id===id));
+      const legs=g.legs.map(F);
+      const times=new Array(ms.length);
+      let t=anchor;
+      for(let i=ms.length-1;i>=0;i--){t=minus(t,legs[i]);times[i]=t;}
+      ms.forEach((m,i)=>deptRows.push({name:m.name,from:m.from,dep:times[i],
+        drive:legs.slice(i).reduce((a,b)=>a+b,0),
+        route:i===0?`${gi+1}조 운전`:`${gi+1}조 동승`}));
+      for(let i=1;i<ms.length;i++)tl.push([times[i],`🚗 ${ms[i].from} 픽업 — ${ms[i].name}`,`${gi+1}조`]);
+      summaries.push(`${gi+1}조: ${ms.map(m=>m.name).join('→')}→골프장`);
+    });
+    // 출발 시각 순 정렬
+    deptRows.sort((a,b)=>a.dep<b.dep?-1:1);
+    routeSummary=summaries.join(' · ');
   }else if(routeMode==='manual'){
     const tMeet={};
     meets.forEach(mt=>{tMeet[mt.id]=minus(anchor,F(mt.toClub));});
@@ -952,7 +1066,7 @@ async function buildReport(){
       <div class="meta">
         <span class="chip">${dateFmt}</span><span class="chip">TEE ${tee}</span>
         <span class="chip">${members.length}인 크루</span>${course?`<span class="chip">${course}</span>`:''}
-        ${routeMode==='chain'?'<span class="chip">🚗 카풀</span>':''}
+        ${routeMode==='chain'||routeMode==='group'?'<span class="chip">🚗 카풀</span>':''}
         ${factor>1?`<span class="chip">교통 ×${factor}</span>`:''}
       </div>
     </div>
@@ -964,7 +1078,7 @@ async function buildReport(){
           <tr><th>멤버</th><th>출발지</th><th>출발</th><th>경로</th><th>이동</th></tr>
           ${deptRows.map(r=>`<tr><td><b>${r.name}</b></td><td>${r.from}</td><td><b>${r.dep}</b></td><td>${r.route}</td><td>${r.drive?r.drive+'분':'—'}</td></tr>`).join('')}
         </table>
-        ${routeSummary?`<div class="hint" style="margin-top:6px">${routeMode==='chain'?'🚗 ':''}${routeSummary}</div>`:''}
+        ${routeSummary?`<div class="hint" style="margin-top:6px">${routeMode==='chain'||routeMode==='group'?'🚗 ':''}${routeSummary}</div>`:''}
       </div>
 
       <div class="sec">
@@ -997,6 +1111,7 @@ async function buildReport(){
   shareText=`⛳ ${club} 라운딩 브리핑\n${dateFmt} · 티오프 ${tee}${course?' · '+course:''}\n\n`+
     `[출발 시각]\n`+deptRows.map(r=>`· ${r.name}: ${r.dep} ${r.from} 출발 (${r.route}${r.drive?', '+r.drive+'분':''})`).join('\n')+
     (routeMode==='chain'?`\n\n[카풀 동선] ${chainPlan.label}`:'')+
+    (routeMode==='group'&&routeSummary?`\n\n[동승 그룹] ${routeSummary}`:'')+
     (tBk?`\n\n[아침] ${tBk} ${bk==='club'?'클럽하우스':mealPick.bk.name}`:'')+
     `\n[체크인] ${tCheckin}\n[티오프] ${tee}`+
     mealLine('라운딩 후',lunch,mealPick.lunch)+
