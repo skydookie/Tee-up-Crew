@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TEE-UP CREW v1.1 — 라운딩 집합 브리핑</title>
+<title>TEE-UP CREW v1.3 — 라운딩 집합 브리핑</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
@@ -155,7 +155,7 @@ td b{font-weight:900}
   <div class="head-in">
     <div>
       <h1>TEE-UP<br><span class="lime">CREW</span></h1>
-      <div class="head-sub" style="margin-top:8px">동반자별 출발 시각 · 카풀 동선 · 식당까지 한 장으로 <span style="opacity:.7">· v1.1</span></div>
+      <div class="head-sub" style="margin-top:8px">동반자별 출발 시각 · 카풀 동선 · 식당까지 한 장으로 <span style="opacity:.7">· v1.3</span></div>
     </div>
     <div class="badge">ROUNDING DAY BRIEFING</div>
   </div>
@@ -234,8 +234,13 @@ td b{font-weight:900}
 
           <div id="groupBlock" style="display:none;margin-top:12px">
             <div class="hint" style="margin-bottom:8px">각 멤버 카드에서 <b>함께 탈 사람</b>을 고르면 같은 조로 묶입니다. 아래 버튼을 누르면 조마다 <b>최적 운전자·픽업 순서·픽업 시각</b>을 계산합니다.</div>
-            <button class="btn lime" type="button" onclick="recomputeGroups(true)">🚗 조별 최적 경로 계산</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn lime" type="button" onclick="recomputeGroups(true)">🚗 조별 최적 경로 계산</button>
+              <button class="btn" type="button" onclick="resetGroups()">↺ 그룹 초기화</button>
+            </div>
             <div id="groupStatus" class="hint" style="margin-top:6px"></div>
+            <div id="ungroupedBox" class="hint" style="margin-top:4px"></div>
+            <div id="groupRoutes" style="margin-top:10px"></div>
           </div>
           <div id="chainBlock" style="display:none;margin-top:12px">
             <button class="btn" type="button" onclick="suggestChains()">동선 후보 계산 (최대 3개)</button>
@@ -538,7 +543,7 @@ function addMember(){
   document.getElementById('fromRes').textContent='';pendingFrom=null;
   chainCands=[];chainPlan=null;renderChainCands();
   refreshMeetFromSelect();recalcAll();
-  if(routeMode==='group')recomputeGroups();
+  if(routeMode==='group'){recomputeGroups();updateUngrouped();}
 }
 function delMember(id){
   members=members.filter(m=>m.id!==id);
@@ -571,16 +576,26 @@ function renderMembers(){
         const on=m.mates.includes(o.id);
         return `<button type="button" class="btn${on?' lime':''}" style="font-size:11px;padding:3px 9px;box-shadow:1px 1px 0 var(--ink)" onclick="toggleMate('${m.id}','${o.id}')">${on?'✓ ':''}${o.name}</button>`;
       }).join(' '):'<span class="hint">다른 멤버가 없습니다.</span>';
-      const gi=groupIndexOf(m.id);
-      const g=gi>=0?groupPlans[gi]:null;
+      // 현재 함께 묶인 사람(연결요소) 계산 — 계산 전에도 표시
+      const grp=buildGroups().find(ids=>ids.includes(m.id))||[m.id];
+      const gi=groupPlans.length?groupIndexOf(m.id):buildGroups().findIndex(ids=>ids.includes(m.id));
+      const g=(gi>=0&&groupPlans.length)?groupPlans[gi]:null;
       let gInfo='';
-      if(g&&!g.solo){
-        const isDriver=g.driver===m.id;
-        const clr=grpColors[gi%grpColors.length];
-        gInfo=`<div class="m-info" style="margin-top:5px"><span class="tag" style="background:${clr}">${gi+1}조</span> `+
-          (g.failed?'경로 계산 실패 — 잠시 후 재시도':g.needClub?'골프장 선택 시 순서 계산':
-            (isDriver?'🚗 운전자':'동승')+` · ${g.order.map(id=>members.find(x=>x.id===id).name).join(' → ')} → 골프장`)+(g.approx?' <span class="tag gray">근사</span>':'')+'</div>';
-      }else if(g&&g.solo){gInfo='<div class="m-info" style="margin-top:5px"><span class="tag gray">단독 · 직행</span></div>';}
+      if(grp.length>1){
+        const clr=grpColors[(gi<0?0:gi)%grpColors.length];
+        const names=grp.map(id=>members.find(x=>x.id===id).name).join(', ');
+        let detail='';
+        if(g&&!g.solo){
+          const isDriver=g.driver===m.id;
+          detail=g.failed?' · 경로 계산 실패':g.needClub?' · 골프장 선택 시 순서 계산':
+            ` · ${isDriver?'🚗 운전자':'동승'} · ${g.order.map(id=>members.find(x=>x.id===id).name).join('→')}→골프장`+(g.approx?' (근사)':'');
+        }else{
+          detail=' · <span style="color:#c0392b">경로 미계산 (계산 버튼 클릭)</span>';
+        }
+        gInfo=`<div class="m-info" style="margin-top:5px"><span class="tag" style="background:${clr}">${gi>=0?gi+1+'조':'그룹'}</span> ${names}${detail}</div>`;
+      }else{
+        gInfo='<div class="m-info" style="margin-top:5px"><span class="tag" style="background:#ffd9d9;border-color:#c0392b">미지정</span> <span style="color:#c0392b">아직 아무도 선택 안 함 — 함께 탈 사람을 고르거나 단독 직행</span></div>';
+      }
       extra=`<div style="margin-top:6px"><div style="font-size:11px;font-weight:700;margin-bottom:4px">함께 탈 사람</div><div style="display:flex;gap:4px;flex-wrap:wrap">${chips}</div>${gInfo}</div>`;
     }
     const isMeetHome=routeMode==='manual'&&m.route!=='direct'&&meets.find(x=>x.id===m.route)?.memberId===m.id;
@@ -604,11 +619,27 @@ function setRouteMode(mode){
   document.getElementById('chainBlock').style.display=mode==='chain'?'block':'none';
   document.getElementById('manualBlock').style.display=mode==='manual'?'block':'none';
   if(mode==='manual')refreshMeetFromSelect();
-  if(mode==='group')recomputeGroups();
+  if(mode==='group'){recomputeGroups();updateUngrouped();}
+  else{const gr=document.getElementById('groupRoutes');if(gr)gr.innerHTML='';}
   recalcAll();
 }
 
 /* ===== 동승 그룹: 상호 선택 → 조 편성 → 조별 최적 운전자·순서 ===== */
+function updateUngrouped(){
+  const box=document.getElementById('ungroupedBox');
+  if(!box)return;
+  if(routeMode!=='group'||!members.length){box.innerHTML='';return;}
+  const groups=buildGroups();
+  const solo=members.filter(m=>{const g=groups.find(ids=>ids.includes(m.id));return !g||g.length===1;});
+  if(!solo.length){box.innerHTML='<span style="color:#1a7a3a">✓ 전원 그룹 지정 완료</span>';}
+  else box.innerHTML='<span style="color:#c0392b">⚠ 미지정 '+solo.length+'명 (단독 직행): '+solo.map(m=>m.name).join(', ')+'</span>';
+}
+function resetGroups(){
+  members.forEach(m=>{m.mates=[];});
+  groupPlans=[];
+  const st=document.getElementById('groupStatus');if(st)st.innerHTML='그룹이 초기화되었습니다. 각 멤버에서 함께 탈 사람을 다시 선택하세요.';
+  renderMembers();updateUngrouped();renderGroupRoutes();
+}
 function toggleMate(id,mateId){
   const m=members.find(x=>x.id===id);
   const i=m.mates.indexOf(mateId);
@@ -618,6 +649,39 @@ function toggleMate(id,mateId){
   const j=o.mates.indexOf(id);
   if(i>=0){if(j>=0)o.mates.splice(j,1);}else{if(j<0)o.mates.push(id);}
   recomputeGroups();
+  updateUngrouped();
+  renderGroupRoutes();
+}
+
+function renderGroupRoutes(){
+  const box=document.getElementById('groupRoutes');
+  if(!box)return;
+  if(routeMode!=='group'){box.innerHTML='';return;}
+  const carpools=groupPlans.filter(g=>!g.solo);
+  const solos=groupPlans.filter(g=>g.solo);
+  if(!carpools.length){box.innerHTML='';return;}  // 실제 묶인 조가 없으면 표시 안 함
+  const grpColors=['#C7F000','#9fe0ff','#ffd39f','#e0b3ff','#b3ffcf','#ffb3c1'];
+  const nm=id=>members.find(x=>x.id===id)?.name||'?';
+  let html='<div style="border-top:2px dashed var(--ink);padding-top:10px"><div style="font-size:11.5px;font-weight:700;letter-spacing:1px;margin-bottom:8px">조별 최적 경로</div>';
+  carpools.forEach((g,i)=>{
+    const gi=groupPlans.indexOf(g);
+    const clr=grpColors[gi%grpColors.length];
+    if(g.failed){html+=`<div class="member"><span class="m-name"><span class="tag" style="background:${clr}">${gi+1}조</span> 계산 실패</span><div class="m-info">잠시 후 다시 계산해주세요.</div></div>`;return;}
+    if(g.needClub){html+=`<div class="member"><span class="m-name"><span class="tag" style="background:${clr}">${gi+1}조</span> ${g.ids.map(nm).join(', ')}</span><div class="m-info">골프장 선택 시 순서 계산</div></div>`;return;}
+    const driver=nm(g.driver);
+    const path=g.order.map(nm).join(' → ')+' → 골프장';
+    const total=g.legs?g.legs.reduce((a,b)=>a+b,0):null;
+    html+=`<div class="member" style="border-left:5px solid ${clr}">
+      <span class="m-name"><span class="tag" style="background:${clr}">${gi+1}조</span> ${g.ids.length}인${g.approx?' <span class="tag gray">근사</span>':''}</span>
+      <div class="m-info" style="color:var(--ink);margin-top:2px">🚗 운전: <b>${driver}</b>${total!=null?` · 총 ${total}분`:''}</div>
+      <div class="m-info" style="margin-top:1px">${path}</div>
+    </div>`;
+  });
+  if(solos.length){
+    html+=`<div class="member"><span class="m-name"><span class="tag gray">단독</span> ${solos.length}명 직행</span><div class="m-info">${solos.map(g=>nm(g.ids[0])).join(', ')}</div></div>`;
+  }
+  html+='</div>';
+  box.innerHTML=html;
 }
 function buildGroups(){
   // union-find로 mates 연결요소 → 그룹
@@ -675,6 +739,8 @@ async function recomputeGroups(force){
     else if(groupPlans.some(g=>g.failed))st2.innerHTML='일부 조의 경로 계산 실패 — 잠시 후 다시 눌러주세요.';
     else st2.innerHTML=`✓ ${carpools.length}개 카풀조 + 단독 ${solos.length}명 계산 완료.`;
   }
+  updateUngrouped();
+  renderGroupRoutes();
 }
 function perms(a){
   if(a.length<=1)return[a];
@@ -1129,7 +1195,7 @@ async function buildReport(){
       ${note?`<div class="sec"><div class="sec-h"><span class="num">${nextNum()}</span><b>메모</b><span class="line"></span></div><p style="font-size:13.5px">${note}</p></div>`:''}
 
     </div>
-    <div class="rep-foot">TEE-UP CREW v1.1 · MADE BY 골프막걸로이 · BLOG.NAVER.COM/GOLFRORY</div>
+    <div class="rep-foot">TEE-UP CREW v1.3 · MADE BY 골프막걸로이 · BLOG.NAVER.COM/GOLFRORY</div>
   `;
 
   // ---- 카톡 공유 텍스트 ----
