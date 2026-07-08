@@ -576,7 +576,7 @@ function renderMembers(){
         const clr=grpColors[gi%grpColors.length];
         gInfo=`<div class="m-info" style="margin-top:5px"><span class="tag" style="background:${clr}">${gi+1}조</span> `+
           (g.failed?'경로 계산 실패 — 잠시 후 재시도':g.needClub?'골프장 선택 시 순서 계산':
-            (isDriver?'🚗 운전자':'동승')+` · ${g.order.map(id=>members.find(x=>x.id===id).name).join(' → ')} → 골프장`)+'</div>';
+            (isDriver?'🚗 운전자':'동승')+` · ${g.order.map(id=>members.find(x=>x.id===id).name).join(' → ')} → 골프장`)+(g.approx?' <span class="tag gray">근사</span>':'')+'</div>';
       }else if(g&&g.solo){gInfo='<div class="m-info" style="margin-top:5px"><span class="tag gray">단독 · 직행</span></div>';}
       extra=`<div style="margin-top:6px"><div style="font-size:11px;font-weight:700;margin-bottom:4px">함께 탈 사람</div><div style="display:flex;gap:4px;flex-wrap:wrap">${chips}</div>${gInfo}</div>`;
     }
@@ -638,14 +638,26 @@ async function recomputeGroups(){
     if(!D){groupPlans.push({ids,order:ids,legs:null,driver:ids[0],failed:true});continue;}
     const CLUB=ms.length;
     let best=null;
-    perms([...Array(ms.length).keys()]).forEach(order=>{
-      const legs=[];let ok=true;
-      for(let i=0;i<ms.length;i++){const f=order[i],t=(i===ms.length-1)?CLUB:order[i+1];if(D[f][t]==null){ok=false;break;}legs.push(D[f][t]);}
-      if(!ok)return;
+    const evalOrder=order=>{
+      const legs=[];
+      for(let i=0;i<ms.length;i++){const f=order[i],t=(i===ms.length-1)?CLUB:order[i+1];if(D[f][t]==null)return null;legs.push(D[f][t]);}
       const driver=legs.reduce((a,b)=>a+b,0);
-      if(!best||driver<best.driver)best={order:order.map(i=>ids[i]),legs,driver};
-    });
-    if(best)groupPlans.push({ids,order:best.order,legs:best.legs,driver:best.order[0]});
+      return {order:order.map(i=>ids[i]),legs,driver};
+    };
+    if(ms.length<=6){
+      // 전체 순열 탐색 (최적)
+      perms([...Array(ms.length).keys()]).forEach(order=>{const r=evalOrder(order);if(r&&(!best||r.driver<best.driver))best=r;});
+    }else{
+      // 큰 조: 각 멤버를 운전자(마지막=골프장 직전)로 두고 나머지는 골프장 근접순 픽업 — 근사 최적
+      const idx=[...Array(ms.length).keys()];
+      for(let d=0;d<ms.length;d++){
+        const others=idx.filter(i=>i!==d).sort((a,b)=>(D[a][CLUB]??1e9)-(D[b][CLUB]??1e9));
+        const order=[d,...others]; // 운전자 출발 → 골프장에서 먼 픽업부터? 운전자가 돌아서 픽업 후 골프장
+        const r=evalOrder(order);
+        if(r&&(!best||r.driver<best.driver))best=r;
+      }
+    }
+    if(best)groupPlans.push({ids,order:best.order,legs:best.legs,driver:best.order[0],approx:ms.length>6});
     else groupPlans.push({ids,order:ids,legs:null,driver:ids[0],failed:true});
   }
   renderMembers();
@@ -660,7 +672,7 @@ async function suggestChains(){
   const box=document.getElementById('chainCands');
   if(!geo){alert('골프장을 먼저 선택해주세요.');return;}
   if(members.length<2){alert('카풀 추천은 멤버 2명 이상일 때 가능합니다.');return;}
-  if(members.length>6){alert('카풀 자동 추천은 6명까지 지원합니다. 그 이상은 수동 설정을 이용해주세요.');return;}
+  if(members.length>7){alert('“최적 카풀 추천”은 전원을 한 조로 최적화하는 기능이라 7명까지만 지원합니다.\n\n크루가 많으면 “동승 그룹 지정”으로 차량별 조를 나눠주세요 (크루는 최대 20명까지 가능합니다).');return;}
   box.innerHTML='<span class="hint">도로 경로 행렬 계산 중…</span>';
   const D=await osrmTable(members.concat([geo]));
   if(!D){box.innerHTML='<span class="hint">경로 서버 연결 실패 — 잠시 후 다시 시도하거나 수동 설정을 이용하세요.</span>';return;}
