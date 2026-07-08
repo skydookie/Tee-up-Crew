@@ -233,7 +233,9 @@ td b{font-weight:900}
           </div>
 
           <div id="groupBlock" style="display:none;margin-top:12px">
-            <div class="hint">각 멤버 카드에서 <b>함께 탈 사람</b>을 고르면 같은 조로 묶입니다. 조마다 <b>운전자·픽업 순서·픽업 시각</b>을 자동 계산합니다 (운전 시간이 가장 짧은 사람이 운전자).</div>
+            <div class="hint" style="margin-bottom:8px">각 멤버 카드에서 <b>함께 탈 사람</b>을 고르면 같은 조로 묶입니다. 아래 버튼을 누르면 조마다 <b>최적 운전자·픽업 순서·픽업 시각</b>을 계산합니다.</div>
+            <button class="btn lime" type="button" onclick="recomputeGroups(true)">🚗 조별 최적 경로 계산</button>
+            <div id="groupStatus" class="hint" style="margin-top:6px"></div>
           </div>
           <div id="chainBlock" style="display:none;margin-top:12px">
             <button class="btn" type="button" onclick="suggestChains()">동선 후보 계산 (최대 3개)</button>
@@ -466,6 +468,7 @@ async function searchClub(){
       chainCands=[];chainPlan=null;renderChainCands();
       mealPick={bk:null,lunch:null};
       recalcAll();
+      if(routeMode==='group')recomputeGroups(true);
     };
     box.appendChild(b);
   });
@@ -626,8 +629,11 @@ function buildGroups(){
   const g={};members.forEach((m,i)=>{const r=find(i);(g[r]=g[r]||[]).push(m.id);});
   return Object.values(g);
 }
-async function recomputeGroups(){
+async function recomputeGroups(force){
   if(routeMode!=='group'){return;}
+  const st=document.getElementById('groupStatus');
+  if(!geo){if(st)st.innerHTML='⚠ 골프장을 먼저 검색·선택해야 경로를 계산할 수 있습니다.';}
+  else if(force&&st){st.innerHTML='조별 최적 경로 계산 중…';}
   groupPlans=[];
   const groups=buildGroups();
   for(const ids of groups){
@@ -661,6 +667,14 @@ async function recomputeGroups(){
     else groupPlans.push({ids,order:ids,legs:null,driver:ids[0],failed:true});
   }
   renderMembers();
+  const st2=document.getElementById('groupStatus');
+  if(st2){
+    const carpools=groupPlans.filter(g=>!g.solo&&!g.failed&&!g.needClub);
+    const solos=groupPlans.filter(g=>g.solo);
+    if(!geo)st2.innerHTML='⚠ 골프장을 먼저 선택하세요.';
+    else if(groupPlans.some(g=>g.failed))st2.innerHTML='일부 조의 경로 계산 실패 — 잠시 후 다시 눌러주세요.';
+    else st2.innerHTML=`✓ ${carpools.length}개 카풀조 + 단독 ${solos.length}명 계산 완료.`;
+  }
 }
 function perms(a){
   if(a.length<=1)return[a];
