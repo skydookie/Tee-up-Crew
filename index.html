@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TEE-UP CREW v1.3 — 라운딩 집합 브리핑</title>
+<title>TEE-UP CREW v2.0 — 라운딩 집합 브리핑</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
 <style>
@@ -155,7 +155,7 @@ td b{font-weight:900}
   <div class="head-in">
     <div>
       <h1>TEE-UP<br><span class="lime">CREW</span></h1>
-      <div class="head-sub" style="margin-top:8px">동반자별 출발 시각 · 카풀 동선 · 식당까지 한 장으로 <span style="opacity:.7">· v1.3</span></div>
+      <div class="head-sub" style="margin-top:8px">동반자별 출발 시각 · 카풀 동선 · 식당까지 한 장으로 <span style="opacity:.7">· v2.0</span></div>
     </div>
     <div class="badge">ROUNDING DAY BRIEFING</div>
   </div>
@@ -423,6 +423,29 @@ async function cseSearch(q,start){
   if(!res.ok)throw new Error('cse '+res.status);
   const j=await res.json();
   return (j.items||[]).map(it=>((it.title||'')+' '+(it.snippet||'')));
+}
+async function cseSearchItems(q){
+  const u=`https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gcs.key)}&cx=${encodeURIComponent(gcs.cx)}&q=${encodeURIComponent(q)}&dateRestrict=y1&num=10`;
+  const res=await fetch(u);
+  if(!res.ok)throw new Error('cse '+res.status);
+  const j=await res.json();
+  return (j.items||[]).map(it=>({title:it.title||'',snippet:it.snippet||'',link:it.link||''}));
+}
+// 검색 결과 텍스트에서 한국어 식당명 후보 추출 (식당/맛집/집/가든 등 접미 + 따옴표 강조어)
+function extractRestaurantNames(items, clubName){
+  const freq={};
+  const generic=['국밥집','숯불갈비','손두부','두부','국밥','갈비','칼국수','막국수','해장국','한정식','백반','정식','식당','가든','맛집','조식','아침','점심'];
+  const bump=(n)=>{n=n.trim();if(n.length<3||n.length>15)return;
+    if(n.includes(clubName)||/골프|라운딩|후기|코스|그린피|맛집|근처|주변|추천|리뷰|블로그|네이버|정보|예약|날씨/.test(n))return;
+    if(generic.includes(n))return; // 상호가 아닌 일반명사 단독 제외
+    freq[n]=(freq[n]||0)+1;};
+  const text=items.map(it=>it.title+' '+it.snippet).join(' ');
+  // (1) 따옴표/괄호 강조된 상호
+  (text.match(/[‘'"“]([가-힣A-Za-z0-9]{2,15})[’'"”]/g)||[]).forEach(m=>bump(m.replace(/[‘'"“’”]/g,'')));
+  // (2) 상호 접미사 패턴 (…식당/…가든/…집/…막국수/…해장국/…국밥/…칼국수/…한정식/…갈비/…숯불/…가마솥 등)
+  const suf='(식당|가든|집|막국수|칼국수|해장국|국밥|한정식|갈비|숯불|가마솥|손두부|두부|추어탕|설렁탕|곰탕|백반|정식|식육|명가|회관|촌|골|원)';
+  (text.match(new RegExp('[가-힣]{2,12}'+suf,'g'))||[]).forEach(m=>bump(m));
+  return Object.entries(freq).sort((a,b)=>b[1]-a[1]).map(e=>e[0]).slice(0,15);
 }
 async function overpass(q){
   const eps=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
@@ -876,74 +899,77 @@ let lastRest={bk:[],lunch:[]};
 async function findRestaurants(kind){
   const listEl=document.getElementById(kind==='bk'?'bkList':'lunchList');
   if(!geo){alert('골프장을 먼저 검색·선택해주세요.');return;}
-  listEl.innerHTML='<span class="hint">주변 식당 검색 중…</span>';
+  const clubName=(document.getElementById('fClub').value.trim()||geo.name||'골프장').replace(/\s+/g,'');
+  const query = kind==='bk' ? clubName+' 아침식사' : clubName+' 맛집';
+  const label = kind==='bk' ? '아침식사' : '맛집';
+  listEl.innerHTML='<span class="hint">최근 1년 '+label+' 언급 상위 식당 집계 중…</span>';
+
+  // ---- 1) 웹검색(최근 1년)에서 식당명 후보 추출 + 언급 집계 ----
+  let ranked=[];
+  if(gcs.key&&gcs.cx){
+    try{
+      let items=await cseSearchItems(query);
+      try{items=items.concat(await cseSearchItems(clubName+(kind==='bk'?' 조식':' 근처 맛집')));}catch(e){}
+      // 중복 URL 제거
+      const seenU=new Set();items=items.filter(it=>{if(seenU.has(it.link))return false;seenU.add(it.link);return true;});
+      const blob=items.map(it=>(it.title+' '+it.snippet)).join(' ');
+      const names=extractRestaurantNames(items, clubName);
+      names.forEach(n=>{
+        const re=new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g');
+        const hits=(blob.match(re)||[]).length;
+        ranked.push({name:n,hits});
+      });
+      ranked=ranked.filter(r=>r.hits>0).sort((a,b)=>b.hits-a.hits);
+    }catch(e){ranked=[];}
+  }
+
+  // ---- 2) 검색 결과가 있으면 그걸로, 없으면 OSM 거리순 폴백 ----
+  if(ranked.length){
+    const top=ranked.slice(0,3);
+    // 지도/거리 링크 부여 (좌표는 골프장 기준 검색 링크)
+    lastRest[kind]=top.map(r=>({name:r.name,hits:r.hits,min:null,manual:false}));
+    listEl.innerHTML=top.map((r,i)=>{
+      const dc='https://www.diningcode.com/list.dc?query='+encodeURIComponent(clubName+' '+r.name);
+      const nv='https://map.naver.com/p/search/'+encodeURIComponent(clubName+' '+r.name);
+      return `<div class="member" id="rc-${kind}-${i}">
+        <span class="m-name">${i+1}순위 · ${r.name}</span><span class="tag">언급 ${r.hits}회</span>
+        <div class="m-info">🔎 ${clubName} ${label} 검색 상위 · 클럽하우스 소요시간은 지도에서 확인</div>
+        <div class="m-info"><a class="map-link" href="${nv}" target="_blank" rel="noopener">네이버 지도</a> · <a class="map-link" href="${dc}" target="_blank" rel="noopener">다이닝코드 리뷰</a></div>
+        <div style="margin-top:6px"><button class="btn" style="font-size:11.5px;padding:5px 12px;box-shadow:2px 2px 0 var(--ink)" type="button" onclick="pickRest('${kind}',${i})">이 식당 선택</button></div>
+      </div>`;
+    }).join('')+`<div class="hint">순위 기준: 최근 1년 "${clubName} ${label}" 웹 언급량. 영업시간·전화·위치는 방문 전 지도에서 확인하세요.</div>`;
+    return;
+  }
+
+  // ---- 폴백: OSM 반경 10km 거리순 ----
+  listEl.innerHTML='<span class="hint">웹 언급 데이터가 부족해 주변 식당(거리순)으로 표시합니다…</span>';
   let cands=[];
   try{
     const q=`[out:json][timeout:15];(node(around:10000,${geo.lat},${geo.lon})[amenity=restaurant][name];way(around:10000,${geo.lat},${geo.lon})[amenity=restaurant][name];);out center tags 60;`;
     const j=await overpass(q);
-    if(!j){listEl.innerHTML='<span class="hint">식당 검색 서버 3곳이 모두 응답하지 않습니다. 잠시 후 다시 시도하거나, 식당명을 직접 입력해주세요.</span>';return;}
-    const seen=new Set();
-    (j.elements||[]).forEach(el=>{
-      const t=el.tags||{};
-      if(!t.name||seen.has(t.name))return;seen.add(t.name);
-      const lat=el.lat??el.center?.lat, lon=el.lon??el.center?.lon;
-      if(lat==null)return;
-      cands.push({name:t.name,lat,lon,
-        phone:t.phone||t['contact:phone']||null,
-        hours:t.opening_hours||null,
-        addr:osmAddr(t),
-        cuisine:t.cuisine||null});
-    });
-  }catch(e){listEl.innerHTML='<span class="hint">식당 검색 서버 연결 실패 — 잠시 후 다시 시도해주세요.</span>';return;}
-  if(!cands.length){listEl.innerHTML='<span class="hint">지도 데이터에서 10km 내 식당을 찾지 못했습니다. 구글 지도에서 "'+(geo.name||'골프장')+' 맛집"으로 검색해보세요. <a class="map-link" href="https://www.google.com/maps/search/'+encodeURIComponent((geo.name||'')+' 맛집')+'/@'+geo.lat+','+geo.lon+',13z" target="_blank" rel="noopener">구글 지도 열기</a></span>';return;}
-  cands.sort((a,b)=>havKm(geo,a)-havKm(geo,b));
-  cands=cands.slice(0,12);
-  // 클럽하우스 → 각 식당 차량 소요시간 (한 번의 행렬 호출)
+    if(j){const seen=new Set();(j.elements||[]).forEach(el=>{const t=el.tags||{};if(!t.name||seen.has(t.name))return;seen.add(t.name);const lat=el.lat??el.center?.lat,lon=el.lon??el.center?.lon;if(lat==null)return;cands.push({name:t.name,lat,lon,phone:t.phone||t['contact:phone']||null,hours:t.opening_hours||null,addr:osmAddr(t),cuisine:t.cuisine||null});});}
+  }catch(e){}
+  if(!cands.length){
+    const dc='https://www.diningcode.com/list.dc?query='+encodeURIComponent(clubName+' '+label);
+    listEl.innerHTML='<span class="hint">식당 정보를 찾지 못했습니다. 골퍼 리뷰가 많은 다이닝코드에서 확인해보세요. <a class="map-link" href="'+dc+'" target="_blank" rel="noopener">'+clubName+' '+label+' 보기 →</a></span>';
+    return;
+  }
+  cands.sort((a,b)=>havKm(geo,a)-havKm(geo,b));cands=cands.slice(0,12);
   const D=await osrmTable([geo].concat(cands));
   if(D){cands.forEach((c,i)=>{c.min=D[0][i+1];});}
-  cands=cands.filter(c=>c.min!=null||!D);
-  // 인기순: 구글 검색(최근 1년) "골프장 맛집" 결과에서 각 식당명 언급 횟수 집계
-  let rankBase='거리순';
-  if(gcs.key&&gcs.cx){
-    try{
-      listEl.innerHTML='<span class="hint">최근 1년 웹 언급량 집계 중…</span>';
-      const clubName=document.getElementById('fClub').value.trim()||geo.name;
-      let texts=await cseSearch(clubName+' 맛집',1);
-      try{texts=texts.concat(await cseSearch(clubName+' 근처 맛집',1));}catch(e){}
-      texts=[...new Set(texts)]; // 두 쿼리에 겹친 동일 글 중복 집계 방지
-      const norm=t=>t.replace(/\s+/g,'');
-      const blob=norm(texts.join(' '));
-      cands.forEach(c=>{
-        const key=norm(c.name);
-        if(key.length<2){c.hits=0;return;}
-        c.hits=blob.split(key).length-1;
-      });
-      if(cands.some(c=>c.hits>0)){
-        cands.sort((a,b)=>(b.hits||0)-(a.hits||0)||(a.min??999)-(b.min??999));
-        rankBase='최근 1년 언급량순';
-      }else{
-        cands.sort((a,b)=>(a.min??999)-(b.min??999));
-        rankBase='거리순 (언급 데이터 없음)';
-      }
-    }catch(e){
-      cands.sort((a,b)=>(a.min??999)-(b.min??999));
-      rankBase='거리순 (검색 API 오류 — 키·리퍼러 설정 확인)';
-    }
-  }else{
-    cands.sort((a,b)=>(a.min??999)-(b.min??999));
-  }
-  const top=cands.slice(0,3);
-  lastRest[kind]=top;
+  cands.sort((a,b)=>(a.min??999)-(b.min??999));
+  const top=cands.slice(0,3);lastRest[kind]=top;
   listEl.innerHTML=top.map((c,i)=>{
     const nv='https://www.google.com/maps/search/'+encodeURIComponent(c.name)+'/@'+c.lat+','+c.lon+',16z';
     return `<div class="member" id="rc-${kind}-${i}">
-      <span class="m-name">${i+1}순위 · ${c.name}</span>${c.hits?`<span class="tag">언급 ${c.hits}회</span>`:''}${c.cuisine?`<span class="tag gray">${c.cuisine}</span>`:''}
+      <span class="m-name">${i+1}순위 · ${c.name}</span>${c.cuisine?`<span class="tag gray">${c.cuisine}</span>`:''}
       <div class="m-info" style="color:var(--ink)">🚗 클럽하우스에서 약 ${c.min!=null?c.min+'분':'?'}${c.addr?` · ${c.addr}`:''}</div>
       <div class="m-info">${c.hours?`⏰ ${c.hours}`:'⏰ 영업시간 정보 없음'}${c.phone?` · ☎ ${c.phone}`:' · ☎ 정보 없음'} · <a class="map-link" href="${nv}" target="_blank" rel="noopener">구글 지도 확인</a></div>
       <div style="margin-top:6px"><button class="btn" style="font-size:11.5px;padding:5px 12px;box-shadow:2px 2px 0 var(--ink)" type="button" onclick="pickRest('${kind}',${i})">이 식당 선택</button></div>
     </div>`;
-  }).join('')+'<div class="hint">순위 기준: '+rankBase+'. 영업시간·전화는 지도 데이터라 오래됐을 수 있으니 방문 전 구글 지도에서 확인하세요.</div>';
+  }).join('')+'<div class="hint">순위 기준: 거리순(웹 언급 데이터 부족). 방문 전 지도에서 확인하세요.</div>';
 }
+
 function pickRest(kind,idx){
   mealPick[kind]=lastRest[kind][idx];
   const listEl=document.getElementById(kind==='bk'?'bkList':'lunchList');
@@ -1195,7 +1221,7 @@ async function buildReport(){
       ${note?`<div class="sec"><div class="sec-h"><span class="num">${nextNum()}</span><b>메모</b><span class="line"></span></div><p style="font-size:13.5px">${note}</p></div>`:''}
 
     </div>
-    <div class="rep-foot">TEE-UP CREW v1.3 · MADE BY 골프막걸로이 · BLOG.NAVER.COM/GOLFRORY</div>
+    <div class="rep-foot">TEE-UP CREW v2.0 · MADE BY 골프막걸로이 · BLOG.NAVER.COM/GOLFRORY</div>
   `;
 
   // ---- 카톡 공유 텍스트 ----
